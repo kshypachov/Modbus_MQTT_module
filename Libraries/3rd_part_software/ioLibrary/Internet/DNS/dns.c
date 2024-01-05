@@ -499,7 +499,7 @@ void DNS_init(uint8_t s, uint8_t * buf)
 }
 
 /* DNS CLIENT RUN */
-int8_t DNS_run(uint8_t * dns_ip, uint8_t * name, uint8_t * ip_from_dns)
+int8_t DNS_run(uint8_t * dns_ip, const uint8_t * name, uint8_t * ip_from_dns)
 {
 	int8_t ret;
 	struct dhdr dhp;

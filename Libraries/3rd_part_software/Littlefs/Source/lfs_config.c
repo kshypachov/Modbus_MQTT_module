@@ -21,7 +21,15 @@ int block_device_sync(const struct lfs_config *c);
 int (* lfs_lock)(const struct lfs_config *c);
 int (* lfs_unlock)(const struct lfs_config *c);
 
-int io_fs_init(uint8_t * lfsReadBuff, uint8_t * lfsWriteBuff, uint8_t * lfslookaheadBuff, uint16_t buffers_size)
+#ifdef LFS_THREADSAFE
+
+void reg_dev_lock_unlock(void * lock(void), void * unlock(void)){
+
+}
+
+#endif
+
+int io_fs_init(uint8_t * lfsReadBuff, uint8_t * lfsWriteBuff, uint8_t * lfslookaheadBuff, uint16_t buffers_size, uint32_t flash_r_size, uint32_t flash_w_size, uint32_t flash_erse_size, uint32_t block_count)
 {
     cfg.read_size   = flash_info.read_size;
     cfg.prog_size   = flash_info.write_size;
@@ -63,7 +71,6 @@ int block_device_erase(const struct lfs_config *c, lfs_block_t block){
 #ifndef LFS_NO_ASSERT
 	assert(block < c->block_count);
 #endif
-	//sFLASH_EraseBlock32k(block * (c -> block_size));
 	sFLASH_EraseSector(block * (c -> block_size));
 	return 0;
 }

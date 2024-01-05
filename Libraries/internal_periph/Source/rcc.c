@@ -36,8 +36,6 @@ void ConfigCrystal(void){
     // Resets the clock configuration to the default reset state
     RCC_DeInit();
 
-//    goto M;
-
     // Enable external crystal (HSE)
     RCC_HSEConfig(RCC_HSE_ON);
     // Wait until HSE ready to use or not

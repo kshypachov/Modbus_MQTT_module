@@ -59,14 +59,19 @@ SOFTWARE.
 #include "stdio.h"
 #include "mqtt_gen_strings.h"
 #include "mqtt_app.h"
+#include "spi_fs.h"
+#include "dns_service.h"
+#include "httpClient.h"
+#include "ssd1306.h"
+#include "httpUtil.h"
 /* Private macro */
 /* Private variables */
 lfs_t lfs;
 lfs_file_t file;
 struct lfs_config cfg;
 
-SemaphoreHandle_t	SPI2mutex, LFSmutex, SocketMutex, DNSMutex; // Semaphore for SPI interfase. Enthernet chip & flash.
-TaskHandle_t		Display, Internet, OneSecond, WachDog, Col_and_Input, Internet_modbus, Internet_httpd, Internet_MQTT, RW_settings, RAM_debug_task_handler; //Task handler for get info about task
+SemaphoreHandle_t	SPI2mutex, LFSmutex, SocketMutex, ServiceSocketMutex; // Semaphore for SPI interfase. Enthernet chip & flash.
+TaskHandle_t		Display, Internet, OneSecond, WachDog, Col_and_Input, Internet_modbus, Internet_httpd, Internet_MQTT, RW_settings, RAM_debug_task_handler, Service_task_handler, Display_task_handler; //Task handler for get info about task
 xQueueHandle		runnTimeQ, EthernetInfoQ, bootCountQ, discreteInputsQ, disctereOutputsReadQ, \
 						disctereOutputsWriteQ, MQTTCredQ, ModbusTCPparamsQ, HAParamsQ;
 
@@ -124,6 +129,14 @@ int SocketGiveSemaphore(void){
 	return 0;
 }
 
+void ServiceNetTakeSemaphore(void){
+	xSemaphoreTake(ServiceSocketMutex, portMAX_DELAY);
+}
+
+void ServiceNetGiveSemaphore(void){
+	xSemaphoreGive(ServiceSocketMutex);
+}
+
 uint8_t read_coils_state(void){
 	uint8_t data;
 	xQueuePeek(disctereOutputsReadQ ,&data,0);
@@ -136,78 +149,81 @@ void write_coils_state(uint8_t data){
 
 void vRead_and_write_settings (void *pvParameters){
 	/* Private variables */
-	uint8_t lfs_file_buf[LFS_BUF_SIZE]; 					// buffer for file W/R
-	uint8_t lfs_read_buf[LFS_BUF_SIZE];						// read from flash buffer
-	uint8_t lfs_write_buf[LFS_BUF_SIZE];					// write to flash buffer
-	uint8_t lfs_lookahead_buff[LFS_BUF_SIZE];
+	uint8_t				lfs_file_buf[LFS_BUF_SIZE]; 					// buffer for file W/R
+	uint8_t				lfs_read_buf[LFS_BUF_SIZE];						// read from flash buffer
+	uint8_t				lfs_write_buf[LFS_BUF_SIZE];					// write to flash buffer
+	uint8_t				lfs_lookahead_buff[LFS_BUF_SIZE];
 
 	static struct lfs_file_config fileConf;
 	memset(&fileConf, 0, sizeof(struct lfs_file_config));
 	fileConf.buffer = lfs_file_buf;  						// use the static buffer
 	fileConf.attr_count = 0;
-	struct lfs_info 	file_info;
-	MQTT_cred_struct 	MQTT_credentials;					// MQTT settings
+
+	struct lfs_info 		file_info;
+	MQTT_cred_struct 		MQTT_credentials;					// MQTT settings
 	//Home_assist_struct 	HA_parameters;					// Home Assistant specific settings
-	ModBusTCP_struct	ModBusTCP_parameters;				// MobBusTCP settins
-	int err;
+	ModBusTCP_struct		ModBusTCP_parameters;				// MobBusTCP settins
+	int 					err;
+	struct SPI_flash_info	flash_parameters;
+	uint32_t				boot_count = 0;
 
-	io_fs_init(lfs_read_buf, lfs_write_buf, lfs_lookahead_buff, LFS_BUF_SIZE);
-
-	err = lfs_mount(&lfs, &cfg);
+	err = spi_fs_init(lfs_read_buf, lfs_write_buf, lfs_lookahead_buff, LFS_BUF_SIZE);
+	err = spi_fs_mount();
 	if (err) {
-		lfs_format(&lfs, &cfg);
-		err = lfs_mount(&lfs, &cfg);
+		spi_fs_format();
+		err = spi_fs_mount();
+		while (1){
+			vTaskDelay(delay10s);
+		}
 	}
 
-	if ((0 > lfs_stat(&lfs, "MQTT_credentials", &file_info)) || (file_info.size == 0) ){
+	spi_fs_mkdir("web");
+	spi_fs_mkdir("web/static");
+	spi_fs_mkdir("web/static/css");
+	spi_fs_mkdir("web/static/js");
+
+	err = spi_fs_file_size("MQTT_credentials");
+	if (err <= 0){
 		//set defualt parameters
 		MQTT_credentials.save		= 0;
 		MQTT_credentials.enable		= 0;
-		MQTT_credentials.ip[0] 		= 0;
-		MQTT_credentials.ip[1] 		= 0;
-		MQTT_credentials.ip[2] 		= 0;
-		MQTT_credentials.ip[3] 		= 0;
+		strcpy(MQTT_credentials.uri, "0.0.0.0");
 		MQTT_credentials.port 		= 0;
 		MQTT_credentials.login[0] 	= 0;
 		MQTT_credentials.pass[0] 	= 0;
 	}else{
-		lfs_file_opencfg(&lfs, &file, "MQTT_credentials", LFS_O_RDONLY | LFS_O_CREAT, &fileConf);
-		lfs_file_read(&lfs, &file, &MQTT_credentials, sizeof(MQTT_credentials));
-		lfs_file_close(&lfs, &file);
+		spi_fs_read_file("MQTT_credentials", &MQTT_credentials, sizeof(MQTT_credentials));
 	}
 
-	if ((0 > lfs_stat(&lfs, "ModbusTCP_params", &file_info)) || (file_info.size == 0) ){
-		//set default parameters
+	err = spi_fs_file_size("ModbusTCP_params");
+	if (err <= 0){
 		ModBusTCP_parameters.save	= 0;
 		ModBusTCP_parameters.enable	= 0;
 	}else{
-		lfs_file_opencfg(&lfs, &file, "ModbusTCP_params", LFS_O_RDONLY | LFS_O_CREAT, &fileConf);
-		lfs_file_read(&lfs, &file, &ModBusTCP_parameters, sizeof(ModBusTCP_parameters));
-		lfs_file_close(&lfs, &file);
+		spi_fs_read_file("ModbusTCP_params", &MQTT_credentials, sizeof(MQTT_credentials));
 	}
 
+	spi_fs_read_file("boot_count", &boot_count, sizeof(boot_count));
 
+	xQueueOverwrite(bootCountQ,			(void *)&boot_count);
 	xQueueOverwrite(MQTTCredQ,			(void *)&MQTT_credentials);
 	xQueueOverwrite(ModbusTCPparamsQ,	(void *)&ModBusTCP_parameters);
+	boot_count++;
+	spi_fs_over_write_file("boot_count", &boot_count, sizeof(boot_count));
 
 	while (1){
-
 		xQueuePeek(MQTTCredQ,		&MQTT_credentials,		0);
 		xQueuePeek(ModbusTCPparamsQ,&ModBusTCP_parameters,	0);
 
 		if (MQTT_credentials.save){
 			MQTT_credentials.save = 0;
-			err = lfs_file_opencfg(&lfs, &file, "MQTT_credentials", LFS_O_RDWR | LFS_O_CREAT | LFS_O_TRUNC, &fileConf);
-			err = lfs_file_write(&lfs, &file, &MQTT_credentials, sizeof(MQTT_credentials));
-			err = lfs_file_close(&lfs, &file);
+			spi_fs_over_write_file("MQTT_credentials", &MQTT_credentials, sizeof(MQTT_credentials));
 			xQueueOverwrite(MQTTCredQ, (void *)&MQTT_credentials);
 		}
 
 		if (ModBusTCP_parameters.save){
 			ModBusTCP_parameters.save = 0;
-			err = lfs_file_opencfg(&lfs, &file, "ModbusTCP_params", LFS_O_RDWR | LFS_O_CREAT | LFS_O_TRUNC, &fileConf);
-			err = lfs_file_write(&lfs, &file, &ModBusTCP_parameters, sizeof(ModBusTCP_parameters));
-			err = lfs_file_close(&lfs, &file);
+			spi_fs_over_write_file("ModbusTCP_params", &ModBusTCP_parameters, sizeof(ModBusTCP_parameters));
 			xQueueOverwrite(ModbusTCPparamsQ,	(void *)&ModBusTCP_parameters);
 		}
 		vTaskDelay(delay0_5s);
@@ -225,6 +241,7 @@ void vInternetMainTask(void *pvParameters){
 	wiz_NetInfo 			NetInfo;
 	Ethernet_info_struct	EthernetInfo;
 	int 					i;
+	uint8_t					dns_buf[MAX_DNS_BUF_SIZE];
 
 
 	w5500_lib_init(&NetInfo);
@@ -233,6 +250,7 @@ void vInternetMainTask(void *pvParameters){
 	reg_wizchip_cs_cbfunc(EthernetChipSelect, EthernetChipDeselect);
 	reg_dhcp_cbfunc(Callback_IPAssigned, Callback_IPAssigned, Callback_IPConflict);
 	reg_dhcp_delay_cbfunc(vTaskDelay);
+	dns_service_init(SERVICE_SOCKET, dns_buf, MAX_DNS_BUF_SIZE);
 
 	NetInfo.mac[0]	= 0x40;
 	NetInfo.mac[1]	= 0x08;
@@ -245,6 +263,8 @@ void vInternetMainTask(void *pvParameters){
 		EthernetInfo.mac[i] = NetInfo.mac[i];
 	}
 
+
+
 	//todo read from flash ip, netmask, dns, gateway
 
 	NetInfo.ip[0]	= 0, NetInfo.ip[1] 	= 0, NetInfo.ip[2] 	= 0, NetInfo.ip[3] 	= 0;
@@ -252,6 +272,15 @@ void vInternetMainTask(void *pvParameters){
 	NetInfo.gw[0] 	= 0, NetInfo.gw[1] 	= 0, NetInfo.gw[2] 	= 0, NetInfo.gw[3] 	= 0;
 	NetInfo.dns[0] 	= 0, NetInfo.dns[1] = 0, NetInfo.dns[2] = 0, NetInfo.dns[3] = 0;
 	NetInfo.dhcp 	= NETINFO_DHCP;
+	// TODO rewrite with memcpy function
+	for(i = 0; i < 4; i++){
+						EthernetInfo.ip[i] 	= NetInfo.ip[i];
+						EthernetInfo.sn[i] 	= NetInfo.sn[i];
+						EthernetInfo.gw[i] 	= NetInfo.gw[i];
+						EthernetInfo.dns[i] = NetInfo.dns[i];
+					}
+
+	xQueueOverwrite(EthernetInfoQ, (void *)&EthernetInfo);
 
 	/*---------------------DEBUG----------------------
 	NetInfo.ip[0]	= 10,	NetInfo.ip[1] 	= 0,	NetInfo.ip[2] 	= 20, 	NetInfo.ip[3] 	= 11;
@@ -320,9 +349,13 @@ xSemaphoreGive(SocketMutex);
 			//ctlnetwork(CN_GET_NETINFO, &NetInfo);
 
 			if (NetInfo.ip[0]== 0){
+				xQueueOverwrite(EthernetInfoQ, (void *)&EthernetInfo);
 				vTaskDelay(delay1s);
 				continue;
 			}
+
+			// SET DNS SERVER IP
+			dns_service_set_dns_ip((uint8_t*)&EthernetInfo.dns);
 
 			xQueueOverwrite(EthernetInfoQ, (void *)&EthernetInfo);
 			vTaskDelay(delay1s);
@@ -340,10 +373,8 @@ void vOneSecondTikTask (void *pvParameters){
 		xQueueOverwrite(runnTimeQ, (void *) &seconds);
 		seconds++ ;
 		DHCP_time_handler();
-		DNS_time_handler();
+		dns_service_increment_second();
 		httpServer_time_handler();
-
-		//httpServer_time_handler();
 		vTaskDelay(delay1s);
 
 		xQueuePeek(EthernetInfoQ,  &EthernetInfo,0);
@@ -432,20 +463,23 @@ xSemaphoreGive(SocketMutex);
 void vInternetHTTPd (void *pvParameters){
 
 	Ethernet_info_struct	EthernetInfo;
-	uint8_t socknumlist[] = {HTTP_SERVER_SOCKET};
+	uint8_t socknumlist[] = {HTTP_SERVER_SOCKET, HTTP_SERVER_SOCKET1,HTTP_SERVER_SOCKET2};
 	uint8_t http_buffer_rx[2048];
 	uint8_t http_buffer_tx[2048];
+	uint8_t i;
+	uint8_t http_nsockets = sizeof(socknumlist) / sizeof(socknumlist[0]);
 
-	httpServer_init(http_buffer_tx, http_buffer_rx, HTTP_SERVER_NSOCKETS, socknumlist);		// Tx/Rx buffers (2 kB) / The number of W5500 chip H/W sockets in use
+	httpServer_init(http_buffer_tx, http_buffer_rx, http_nsockets, socknumlist);		// Tx/Rx buffers (2 kB) / The number of W5500 chip H/W sockets in use
 	reg_external_post_cgi_processor(http_post_cgi_processor);
+	reg_external_get_cgi_processor(http_get_cgi_processor);
 	http_parse_params_init(MQTTCredQ,		MQTT);
 	http_parse_params_init(HAParamsQ,		HA);
 	http_parse_params_init(ModbusTCPparamsQ,ModBusTCP);
 
 	// Index page and netinfo / base64 image demo
-	reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page);						// index.html 		: Main page example
-	reg_httpServer_webContent((uint8_t *)"settings_MQTT.html", (uint8_t *)conf_page_mqtt);		// settings_MQTT.html 	: Network information example page
-	reg_httpServer_webContent((uint8_t *)"settings_MODBUS_TCP.html", (uint8_t *)settings_ModbusTCP_page);		// settings_MQTT.html 	: Network information example page
+	reg_httpServer_webContent((uint8_t *)"index.html", (uint8_t *)index_page);									// index.html 		: Main page example
+	reg_httpServer_webContent((uint8_t *)"settings_MQTT.html", (uint8_t *)conf_page_mqtt);						// settings_MQTT.html 	: Network information example page
+	reg_httpServer_webContent((uint8_t *)"upload.html", (uint8_t *)download_file_page);		// settings_MQTT.html 	: Network information example page
 
 	vTaskDelay(delay5s);
 
@@ -453,10 +487,12 @@ void vInternetHTTPd (void *pvParameters){
 		xQueuePeek(EthernetInfoQ ,&EthernetInfo,0);
 		if ((EthernetInfo.link == ETH_LINK_UP) && (assigned_ip() == true)){
 xSemaphoreTake(SocketMutex, portMAX_DELAY);
-			httpServer_run(0); // HTTP Server handler
+			for(i =0 ; i < http_nsockets; i++){
+				httpServer_run(i); // HTTP Server handler
+			}
 xSemaphoreGive(SocketMutex);
 		}
-		vTaskDelay(250);
+		vTaskDelay(10);
 	}
 	vTaskDelete(NULL);
 
@@ -467,8 +503,8 @@ void vInternet_MQTT(void *pvParameters){
 	MQTT_cred_struct 		MQTT_credentials;	//MQTT global variables
 	Home_assist_struct 		HA_parameters;		//Home Assistant params (topik)
 	unsigned char 			targetMQTThostname[MAX_DOMAIN_NAME] = {"eu-central-1.console.aws.amazon.com"}; //mqtt server hostname
-	unsigned char 			MQTT_SEND_BUF[MQTT_TEMP_BUF];
-	unsigned char 			MQTT_READ_BUF[MQTT_TEMP_BUF];
+	char 					MQTT_SEND_BUF[MQTT_TEMP_BUF];
+	char 					MQTT_READ_BUF[MQTT_TEMP_BUF];
 	char		 			buf_payload[512];
 	char 					buf_topik[TOPIK_MAX_LEN];
 	uint8_t 				inputStatus, inputStatusOld;
@@ -477,6 +513,7 @@ void vInternet_MQTT(void *pvParameters){
 	Ethernet_info_struct	EthernetInfo;
 	uint32_t				input_next_update_time = 0;
 	uint32_t				coils_next_update_time = 0;
+	int8_t					result;
 
 	init_mqtt_call_mutex(SocketTakeSemaphore, SocketGiveSemaphore);
 	init_mqtt_call_rw_coils(read_coils_state, write_coils_state);
@@ -498,7 +535,10 @@ void vInternet_MQTT(void *pvParameters){
 		}
 
 		if (!MQTT_credentials.enable) continue;
-		mqtt_client_init(&EthernetInfo, &MQTT_credentials, MQTT_SEND_BUF, MQTT_TEMP_BUF, MQTT_READ_BUF, MQTT_TEMP_BUF);
+		if (mqtt_client_init(&EthernetInfo, &MQTT_credentials, MQTT_SEND_BUF, MQTT_TEMP_BUF, MQTT_READ_BUF, MQTT_TEMP_BUF) != 0 ) {
+			//TODO add message to log
+			continue;
+		}
 		if (mqtt_client_connect() < 0) continue;
 		if (mqtt_client_reg_dev_on_home_assist() != 0) continue;
 		if (mqtt_subscrabe_on_topik() != 0) continue;
@@ -545,7 +585,7 @@ void vInternet_MQTT(void *pvParameters){
 
 void vDebug_RAM_usage(void *pvParameters){
 	int FreeHeapSize = 0;
-	UBaseType_t HWM_RW_settings, HWM_OneSecond, HWM_Col_and_Input, HWM_Internet, HWM_Internet_modbus, HWM_Internet_httpd, HWM_Internet_MQTT, HWM_RAM_debug_task_handler ;
+	UBaseType_t HWM_RW_settings, HWM_OneSecond, HWM_Col_and_Input, HWM_Internet, HWM_Internet_modbus, HWM_Internet_httpd, HWM_Internet_MQTT, HWM_RAM_debug_task_handler, HWM_Service_task, HWM_Display_Task;
 
 	while(1){
 
@@ -557,11 +597,137 @@ void vDebug_RAM_usage(void *pvParameters){
 		HWM_Internet_modbus 		= uxTaskGetStackHighWaterMark( Internet_modbus );
 		HWM_Internet_httpd			= uxTaskGetStackHighWaterMark( Internet_httpd );
 		HWM_Internet_MQTT 			= uxTaskGetStackHighWaterMark( Internet_MQTT );
+		HWM_Service_task			= uxTaskGetStackHighWaterMark( Service_task_handler );
+		HWM_Display_Task			= uxTaskGetStackHighWaterMark( Display_task_handler );
 		HWM_RAM_debug_task_handler 	= uxTaskGetStackHighWaterMark( NULL );
 
 		vTaskDelay(delay1s);
 	}
 	vTaskDelete(NULL);
+}
+
+void vService_Task(void *pvParameters){
+	char buff[2048];
+	int err;
+	uint8_t ip_addr[4] = {10, 0, 3, 6};
+
+	while(!assigned_ip()){
+		vTaskDelay(1000);
+	}
+
+	ServiceNetTakeSemaphore();
+//	err = func_http_get_download_file(SERVICE_SOCKET, "mqtt.com", ip_addr, 8081, "/MqttSettings.html", 1000, &buff, 512, "/web/mqtt_settings.html", 10000000);
+	err = func_http_get_download_file(SERVICE_SOCKET, "mqtt.com", ip_addr, 8081, "/static/mqtt.html", 1000, &buff, 2048, "/web/mqtt.html", 1000000);
+	//func_http_get_download_file(SERVICE_SOCKET, "mqtt.com", ip_addr, 8081, "/static/js/main.5f24b7dc.js", 1000, &buff, 2048, "/web/static/js/main.5f24b7dc.js", 1000000);
+	ServiceNetGiveSemaphore();
+
+	while (1){
+
+
+		vTaskDelay(delay1s);
+	}
+	vTaskDelete(NULL);
+}
+
+void vDisplay_Task(void *pvParameters){
+
+	Ethernet_info_struct	EthernetInfo;
+	uint8_t x,y,i,coilStatus,inputStatus;
+	uint32_t seconds, boot_count;
+	char buf[20];
+
+	vTaskDelay(delay0_5s);
+	xQueuePeek(EthernetInfoQ, &EthernetInfo, 0);
+	xQueuePeek(bootCountQ,    &boot_count  , 0);
+
+	SSD1306_Init();
+
+    SSD1306_GotoXY(x=1,y=0);
+    SSD1306_Fill(SSD1306_COLOR_BLACK);
+    SSD1306_Puts("Compiled: ", &Font_7x10, SSD1306_COLOR_WHITE);
+    //SSD1306_GotoXY(x=1,y=y+11);
+    SSD1306_Puts(COMPILE_TIME, &Font_7x10, SSD1306_COLOR_WHITE);
+    SSD1306_GotoXY(x=1,y=y+11);
+    SSD1306_Puts(COMPILE_DATE, &Font_7x10, SSD1306_COLOR_WHITE);
+    SSD1306_GotoXY(x=1,y=y+11);
+	SSD1306_Puts("MAC: ", &Font_7x10, SSD1306_COLOR_WHITE);
+	SSD1306_GotoXY(x=1,y=y+11);
+	sprintf((char *)buf,"%02X:%02X:%02X:%02X:%02X:%02X", EthernetInfo.mac[0], EthernetInfo.mac[1], EthernetInfo.mac[2], EthernetInfo.mac[3], EthernetInfo.mac[4], EthernetInfo.mac[5]);
+	SSD1306_Puts((char *)buf, &Font_7x10, SSD1306_COLOR_WHITE);
+	SSD1306_GotoXY(x=1,y=y+11);
+	SSD1306_Puts("Boot times: ", &Font_7x10, SSD1306_COLOR_WHITE);
+	sprintf((char *)buf, "%lu", boot_count);
+	SSD1306_Puts((char *)buf, &Font_7x10, SSD1306_COLOR_WHITE);
+
+    SSD1306_UpdateScreen();
+    vTaskDelay(5000);
+
+	while(1){
+		xQueuePeek(EthernetInfoQ,  &EthernetInfo, 0);
+		xQueuePeek(disctereOutputsReadQ ,&coilStatus,0);
+		xQueuePeek(discreteInputsQ, &inputStatus, 0);
+		xQueuePeek(runnTimeQ,  &seconds,0);
+
+		SSD1306_GotoXY(x=1,y=0);
+		SSD1306_Fill(SSD1306_COLOR_BLACK);
+	    SSD1306_Puts("IP:", &Font_7x10, SSD1306_COLOR_WHITE);
+	    sprintf((char *)buf,"%d.%d.%d.%d", EthernetInfo.ip[0], EthernetInfo.ip[1], EthernetInfo.ip[2], EthernetInfo.ip[3]);
+	    SSD1306_Puts((char *)buf, &Font_7x10, SSD1306_COLOR_WHITE);
+	    SSD1306_GotoXY(x=1,y=10);
+	    SSD1306_Puts("Link stat:", &Font_7x10, SSD1306_COLOR_WHITE);
+	    if (EthernetInfo.link){
+	    	if(EthernetInfo.speed == PHY_SPEED_10){
+	    		SSD1306_Puts("10Mb/s ", &Font_7x10, SSD1306_COLOR_WHITE);
+	    	}else{
+	    		SSD1306_Puts("100Mb/s ", &Font_7x10, SSD1306_COLOR_WHITE);
+	    	}
+	    	SSD1306_GotoXY(x,y=y+11);
+	    	SSD1306_Puts("Duplex:", &Font_7x10, SSD1306_COLOR_WHITE);
+	    	if(EthernetInfo.duplex == PHY_DUPLEX_HALF){
+	    		SSD1306_Puts("Half", &Font_7x10, SSD1306_COLOR_WHITE);
+	    	}else{
+	    		SSD1306_Puts("Full", &Font_7x10, SSD1306_COLOR_WHITE);
+	    	}
+	    }else{
+	    	SSD1306_Puts("OFFLINE", &Font_7x10, SSD1306_COLOR_BLACK);
+	    }
+
+	    SSD1306_GotoXY(x,y=y+11);
+	    SSD1306_Puts("Out:", &Font_7x10, SSD1306_COLOR_WHITE);
+	    SSD1306_GotoXY(x=x+30,y);
+	    for (i=REG_COILS_START ; i<REG_COILS_NREGS ; i++){
+	    	sprintf((char *)buf,"%d",i+1);
+	    	if (xMBUtilGetBits(&coilStatus, i, 1)){
+	    		SSD1306_Puts((char *)buf, &Font_7x10, SSD1306_COLOR_BLACK);
+	    	}else{
+	    		SSD1306_Puts((char *)buf, &Font_7x10, SSD1306_COLOR_WHITE);
+	    	}
+	    SSD1306_GotoXY(x=x+8,y);
+	    }
+
+	    SSD1306_GotoXY(x=1,y=y+11);
+	    SSD1306_Puts("In:", &Font_7x10, SSD1306_COLOR_WHITE);
+	    SSD1306_GotoXY(x=x+30,y);
+	    for (i=REG_DISCRETE_START ; i<REG_DISCRETE_NREGS ; i++){
+	    	sprintf((char *)buf,"%d",i+1);
+	    	if (xMBUtilGetBits(&inputStatus, i, 1)){
+	    		SSD1306_Puts((char *)buf, &Font_7x10, SSD1306_COLOR_BLACK);
+	    	}else{
+	    		SSD1306_Puts((char *)buf, &Font_7x10, SSD1306_COLOR_WHITE);
+	    	}
+	    SSD1306_GotoXY(x=x+8,y);
+	    }
+
+	    SSD1306_GotoXY(x=x+50,y=y+8);
+	    if((seconds % 2) == 0){
+	    	SSD1306_Puts("#", &Font_7x10, SSD1306_COLOR_BLACK);
+	    }else{
+	    	SSD1306_Puts("#", &Font_7x10, SSD1306_COLOR_WHITE);
+	    }
+	    SSD1306_UpdateScreen();
+	    vTaskDelay(delay0_1s);
+	}
+
 }
 
 //Работает корректно
@@ -757,6 +923,7 @@ int main(void)
 	 NVIC_SetVectorTable(NVIC_VectTab_FLASH, 0x08010000);
 	__enable_irq();
 
+	ConfigCrystal();
 	ConfigRcc();
 	ConfigGPIO();
 	ConfigSPI2();
@@ -772,27 +939,51 @@ int main(void)
 	MQTTCredQ 				= xQueueCreate ( QUEUE_LENGTH, sizeof(MQTT_cred_struct));
 	HAParamsQ				= xQueueCreate ( QUEUE_LENGTH, sizeof(Home_assist_struct));
 	ModbusTCPparamsQ		= xQueueCreate ( QUEUE_LENGTH, sizeof(ModBusTCP_struct));
+	bootCountQ				= xQueueCreate ( QUEUE_LENGTH, sizeof(uint32_t));
 	/* --------------------init mutex ---------------------------*/
 	SPI2mutex 				= xSemaphoreCreateMutex();
 	LFSmutex 				= xSemaphoreCreateMutex();
 	SocketMutex				= xSemaphoreCreateMutex();
-	DNSMutex				= xSemaphoreCreateMutex();
+	ServiceSocketMutex		= xSemaphoreCreateMutex();
 	xSemaphoreGive(SPI2mutex);
 	xSemaphoreGive(LFSmutex);
 	xSemaphoreGive(SocketMutex);
-	xSemaphoreGive(DNSMutex);
+	xSemaphoreGive(ServiceSocketMutex);
 	RegSPIMutexCallbackFunction(SPI2TakeSemaphore, SPI2GiveSemaphore);
+	spi_fs_init_mutex(LFSTakeSemaphore, LFSGiveSemaphore);
+	dns_service_reg_cb_mutex(ServiceNetTakeSemaphore, ServiceNetGiveSemaphore);
+	dns_service_reg_cb_net_ready(assigned_ip);
+	reg_http_cliend_delay_cb(vTaskDelay);
+	reg_httpServer_cbfunc_delay(vTaskDelay);
 
-	sFLASH_GetInfo();
+#ifdef FreeRTOS_DEBUG
+	vQueueAddToRegistry( runnTimeQ , "runnTimeQ" );
+	vQueueAddToRegistry( EthernetInfoQ , "EthernetInfoQ" );
+	vQueueAddToRegistry( bootCountQ, "bootCountQ" );
+	vQueueAddToRegistry( discreteInputsQ  , "discreteInputsQ  " );
+	vQueueAddToRegistry( disctereOutputsReadQ, "disctereOutputsReadQ" );
+	vQueueAddToRegistry( disctereOutputsWriteQ, "disctereOutputsWriteQ" );
+	vQueueAddToRegistry( MQTTCredQ , "MQTTCredQ " );
+	vQueueAddToRegistry( HAParamsQ, "HAParamsQ" );
+	vQueueAddToRegistry( ModbusTCPparamsQ, "ModbusTCPparamsQ" );
+	vQueueAddToRegistry( SPI2mutex, "SPI2mutex" );
+	vQueueAddToRegistry( LFSmutex, "LFSmutex" );
+	vQueueAddToRegistry( SocketMutex, "SocketMutex" );
+	vQueueAddToRegistry( ServiceSocketMutex, "ServiceSocketMutex" );
+#endif
 
-	xTaskCreate(vRead_and_write_settings		,(const char*)"vRead_and_write_settings"  		 , 1000, NULL, tskIDLE_PRIORITY + 2, &RW_settings	);
-	xTaskCreate(vOneSecondTikTask				,(const char*)"vOneSecondTikTask"		   		 , 150,  NULL, tskIDLE_PRIORITY + 1, &OneSecond		);
-	xTaskCreate(vCol_and_Input					,(const char*)"vCol_and_Input"			   		 , 200,  NULL, tskIDLE_PRIORITY + 1, &Col_and_Input	);
-	xTaskCreate(vInternetMainTask				,(const char*)"vInternetMainTask"				 , 2000, NULL, tskIDLE_PRIORITY + 2, &Internet		);
-	xTaskCreate(vInternetModbusTCP				,(const char*)"vInternetModbusTCP"			   	 , 700,  NULL, tskIDLE_PRIORITY + 1, &Internet_modbus );
-	xTaskCreate(vInternetHTTPd					,(const char*)"vInternetHTTPd"			   		 , 5000, NULL, tskIDLE_PRIORITY + 1, &Internet_httpd );
-	xTaskCreate(vInternet_MQTT					,(const char*)"vInternet_MQTT"				   	 , 1500, NULL, tskIDLE_PRIORITY + 1, &Internet_MQTT	);
-	xTaskCreate(vDebug_RAM_usage				,(const char*)"vDebug_RAM_usage"				 , 70,  NULL, tskIDLE_PRIORITY + 1, &RAM_debug_task_handler );
+
+	xTaskCreate(vRead_and_write_settings		,(const char*)"vRead_and_write_settings"  		, 1000, NULL, tskIDLE_PRIORITY + 2, &RW_settings	);
+	xTaskCreate(vOneSecondTikTask				,(const char*)"vOneSecondTikTask"		   		, 150,  NULL, tskIDLE_PRIORITY + 1, &OneSecond		);
+	xTaskCreate(vCol_and_Input					,(const char*)"vCol_and_Input"			   		, 200,  NULL, tskIDLE_PRIORITY + 1, &Col_and_Input	);
+	xTaskCreate(vInternetMainTask				,(const char*)"vInternetMainTask"				, 2000, NULL, tskIDLE_PRIORITY + 2, &Internet		);
+	xTaskCreate(vInternetModbusTCP				,(const char*)"vInternetModbusTCP"			   	, 700,  NULL, tskIDLE_PRIORITY + 1, &Internet_modbus );
+	xTaskCreate(vInternetHTTPd					,(const char*)"vInternetHTTPd"			   		, 5000, NULL, tskIDLE_PRIORITY + 1, &Internet_httpd );
+	xTaskCreate(vInternet_MQTT					,(const char*)"vInternet_MQTT"				   	, 1500, NULL, tskIDLE_PRIORITY + 1, &Internet_MQTT	);
+	xTaskCreate(vDebug_RAM_usage				,(const char*)"vDebug_RAM_usage"				, 90,   NULL, tskIDLE_PRIORITY + 1, &RAM_debug_task_handler );
+	xTaskCreate(vDisplay_Task					,(const char*)"vDisplay_Task"					, 200,   NULL, tskIDLE_PRIORITY + 1, &Display_task_handler );
+//	xTaskCreate(vService_Task					,(const char*)"vService_Task"					 , 2000, NULL, tskIDLE_PRIORITY + 1, &Service_task_handler );
+
 	vTaskStartScheduler();
 }
 

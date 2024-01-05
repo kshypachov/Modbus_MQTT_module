@@ -29,7 +29,7 @@
 							"	<h2>Головна сторінка</h2>\r\n"\
 							"	<h3>Модуль SHY-DI3-DO3</h3>\r\n"\
 							"	<!-- <div><a href=\"settings_network\">Налаштування мережі</a></div> -->\r\n"\
-							"	<div><a href=\"settings_MQTT.html\">Налаштування MQTT</a></div>\r\n"\
+							"	<div><a href=\"mqtt.html\">Налаштування MQTT</a></div>\r\n"\
 							"	<div><a href=\"settings_MODBUS_TCP.html\">Налаштування ModbusTCP</a></div>\r\n"\
 							"	<div><a href=\"settings_MQTT\">Інформація про модуль</a></div>\r\n"\
 							"	<div><a href=\"restart.cgi\" target=\"_blank\">Перезавантаження</a></div>\r\n"\
@@ -142,5 +142,20 @@
 								"	</form>\r\n"\
 								"</body>\r\n"\
 								"</html>\r\n"
+
+#define download_file_page		"<!DOCTYPE html>\r\n"\
+								"	<html>\r\n"\
+								"	  <head>\r\n"\
+								"		<meta charset=\"utf-8\" />\r\n"\
+								"		<title>Form</title>\r\n"\
+								"	  </head>\r\n"\
+								"	  <body>\r\n"\
+								"		<form action=\"/action.cgi\" method=\"post\" enctype=\"multipart/form-data\">\r\n"\
+								"		  <input type=\"text\" name=\"name\" placeholder=\"Name\" />\r\n"\
+								"		  <input type=\"file\" name=\"profilePicture\" />\r\n"\
+								"		  <input type=\"submit\" value=\"Submit\" />\r\n"\
+								"		</form>\r\n"\
+								"	  </body>\r\n"\
+								"	</html>\r\n"\
 
 #endif /* DEFINITIONS_DATA_TYPES_WEB_PAGES_H_ */

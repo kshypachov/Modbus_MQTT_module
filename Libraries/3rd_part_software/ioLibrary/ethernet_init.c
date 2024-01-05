@@ -120,7 +120,8 @@ int w5500_init(void)
   EthernetChipResetOn();
   delay_ms(delay0_5s);
   EthernetChipResetOff();
-  delay_ms(delay3s);
+  //delay_ms(delay3s);
+  delay_ms(delay1s);
 
   if (ctlwizchip(CW_INIT_WIZCHIP, (void*)W5500FifoSize) == -1)
   {

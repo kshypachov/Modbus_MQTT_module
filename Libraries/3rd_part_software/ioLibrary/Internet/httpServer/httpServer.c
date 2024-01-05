@@ -13,8 +13,13 @@
 #include "ff.h" 	// header file for FatFs library (FAT file system)
 #endif
 
+#ifdef _USE_USER_SPI_FLASH_
+#include "spi_fs.h"
+#endif
+
 #ifndef DATA_BUF_SIZE
 	#define DATA_BUF_SIZE		2048
+	//#define DATA_BUF_SIZE		100
 #endif
 
 /*****************************************************************************
@@ -64,8 +69,16 @@ static void send_http_response_cgi(uint8_t s, uint8_t * buf, uint8_t * http_body
 // Callback functions definition: MCU Reset / WDT Reset
 void default_mcu_reset(void) {;}
 void default_wdt_reset(void) {;}
+void default_function(void)  {;}
 void (*HTTPServer_ReStart)(void) = default_mcu_reset;
 void (*HTTPServer_WDT_Reset)(void) = default_wdt_reset;
+void (*delay_os_ms)(uint32_t) =  default_function;
+
+
+void reg_httpServer_cbfunc_delay(void(*delay_function)(uint32_t)){
+
+	if (delay_function) delay_os_ms = delay_function;
+}
 
 void httpServer_Sockinit(uint8_t cnt, uint8_t * socklist)
 {
@@ -194,7 +207,9 @@ void httpServer_run(uint8_t seqnum)
 					printf("> HTTPSocket[%d] : [State] STATE_HTTP_RES_INPROC\r\n", s);
 #endif
 					// Repeatedly send remaining data to client
-					send_http_response_body(s, 0, http_response, 0, 0);
+// TODO: check function if it normal worked after change
+					//send_http_response_body(s, 0, http_response, 0, 0);
+					send_http_response_body(s, HTTPSock_Status[seqnum].file_name, http_response, 0, 0);
 
 					if(HTTPSock_Status[seqnum].file_len == 0) HTTPSock_Status[seqnum].sock_status = STATE_HTTP_RES_DONE;
 					break;
@@ -209,9 +224,9 @@ void httpServer_run(uint8_t seqnum)
 					HTTPSock_Status[seqnum].file_start = 0;
 					HTTPSock_Status[seqnum].sock_status = STATE_HTTP_IDLE;
 
-//#ifdef _USE_SDCARD_
-//					f_close(&fs);
-//#endif
+#ifdef _USE_SDCARD_
+					f_close(&fs);
+#endif
 #ifdef _USE_WATCHDOG_
 					HTTPServer_WDT_Reset();
 #endif
@@ -316,6 +331,9 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 
 	uint8_t flag_datasend_end = 0;
 
+#ifdef _USE_USER_SPI_FLASH_
+	char tmp_path[PATH_BUF_SIZE] = {0x00, };
+#endif
 #ifdef _USE_SDCARD_
 	uint16_t blocklen;
 #endif
@@ -393,6 +411,7 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 	//HTTPSock_Status[get_seqnum]->storage_type == CODEFLASH
 	//HTTPSock_Status[get_seqnum]->storage_type == SDCARD
 	//HTTPSock_Status[get_seqnum]->storage_type == DATAFLASH
+	//HTTPSock_Status[get_seqnum]->storage_type == USERSPIFLASH
 /*****************************************************/
 
 	if(HTTPSock_Status[get_seqnum].storage_type == CODEFLASH)
@@ -400,6 +419,18 @@ static void send_http_response_body(uint8_t s, uint8_t * uri_name, uint8_t * buf
 		if(HTTPSock_Status[get_seqnum].file_len) start_addr = HTTPSock_Status[get_seqnum].file_start;
 		read_userReg_webContent(start_addr, &buf[0], HTTPSock_Status[get_seqnum].file_offset, send_len);
 	}
+
+#ifdef _USE_USER_SPI_FLASH_
+	else if(HTTPSock_Status[get_seqnum].storage_type == USERSPIFLASH){
+
+
+		memset(tmp_path, 0x0, PATH_BUF_SIZE);
+		strcpy((char *)tmp_path, HTTP_FS_DIR);
+		strcat((char *)tmp_path, (const char *)uri_name);
+		spi_fs_read_file_offset((const char *)tmp_path, &buf[0], HTTPSock_Status[get_seqnum].file_offset, send_len);
+	}
+#endif
+
 #ifdef _USE_SDCARD_
 	else if(HTTPSock_Status[get_seqnum].storage_type == SDCARD)
 	{
@@ -500,11 +531,16 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 	int8_t get_seqnum;
 	uint8_t content_found;
 
+#ifdef _USE_USER_SPI_FLASH_
+	int64_t err = 0;
+#endif
+
 	if((get_seqnum = getHTTPSequenceNum(s)) == -1) return; // exception handling; invalid number
 
 	http_status = 0;
 	http_response = pHTTP_RX;
 	file_len = 0;
+
 
 	//method Analyze
 	switch (p_http_request->METHOD)
@@ -572,9 +608,22 @@ static void http_process_handler(uint8_t s, st_http_request * p_http_request)
 					; // To do
 				}
 #endif
+
+#ifdef _USE_USER_SPI_FLASH_
+				else if(0 < ( err = spi_fs_serch_file_in_dir(HTTP_FS_DIR, (const char *)uri_name)))/* Read content from spi flash */
+				{
+					file_len = err;
+					content_found = 1;
+					//HTTPSock_Status[get_seqnum].file_name
+					HTTPSock_Status[get_seqnum].storage_type = USERSPIFLASH;
+					; // To do
+				}
+#endif
 				else
 				{
 					content_found = 0; // fail to find content
+					file_len = 0;
+
 				}
 
 				if(!content_found)
@@ -658,6 +707,7 @@ void httpServer_time_handler(void)
 
 uint32_t get_httpServer_timecount(void)
 {
+	delay_os_ms(1);
 	return httpServer_tick_1s;
 }
 

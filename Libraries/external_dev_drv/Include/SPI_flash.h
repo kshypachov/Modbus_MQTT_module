@@ -121,7 +121,7 @@ void sFLASH_WriteBuffer(uint8_t* pBuffer, uint32_t WriteAddr, uint16_t NumByteTo
 void sFLASH_ReadBuffer(uint8_t* pBuffer, uint32_t ReadAddr, uint16_t NumByteToRead);
 uint32_t sFLASH_ReadID(void);
 void sFLASH_StartReadSequence(uint32_t ReadAddr);
-void sFLASH_GetInfo(void);
+struct SPI_flash_info sFLASH_GetInfo(void);
 
 /* Low layer functions */
 void SPI_flash_io_init(void);

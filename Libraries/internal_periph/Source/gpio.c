@@ -50,15 +50,15 @@ void ConfigGPIO(void){
 	GPIO_Init(w25q_CS_GPIO_PORT, &GPIO_InitStructure);
 
 	//I2C GPIO
-	GPIO_InitStructure.GPIO_Pin = GPIO_Pin_6 | GPIO_Pin_7;
+	GPIO_InitStructure.GPIO_Pin = oled_I2C_SDA_PIN | oled_I2C_SCL_PIN;
 	GPIO_InitStructure.GPIO_Mode = GPIO_Mode_AF;
 	GPIO_InitStructure.GPIO_Speed = GPIO_Speed_50MHz;
 	GPIO_InitStructure.GPIO_OType = GPIO_OType_OD;
 	GPIO_InitStructure.GPIO_PuPd = GPIO_PuPd_UP;
 	GPIO_Init(GPIOB, &GPIO_InitStructure);
 
-	GPIO_PinAFConfig(GPIOB, GPIO_PinSource6, GPIO_AF_I2C1);
-	GPIO_PinAFConfig(GPIOB, GPIO_PinSource7, GPIO_AF_I2C1);
+	GPIO_PinAFConfig(GPIOB, oled_I2C_SCL_SOURCE, GPIO_AF_I2C1);
+	GPIO_PinAFConfig(GPIOB, oled_I2C_SDA_SOURCE, GPIO_AF_I2C1);
 
 	/* Coils PINs*/
 	GPIO_InitStructure.GPIO_Pin = coil1_PIN | coil2_PIN /*| coil3_PIN | coil4_PIN | coil5_PIN | coil6_PIN | coil7_PIN | coil8_PIN*/;
@@ -89,24 +89,24 @@ void EthernetChipResetOff(void){
 }
 
 void EthernetChipSelect(void){
-//	SPI2MutexGet();
+	SPI2MutexGet();
 	GPIO_ResetBits(w5500_CS_GPIO_PORT, w5500_CS_PIN);
 }
 
 void EthernetChipDeselect(void){
-//	SPI2MutexRelease();
+	SPI2MutexRelease();
 	GPIO_SetBits(w5500_CS_GPIO_PORT, w5500_CS_PIN);
 }
 
 void FlashChipSelect(void){
 	/* Select sFLASH: Chip Select pin low */
-//	SPI2MutexGet();
+	SPI2MutexGet();
 	GPIO_ResetBits(w25q_CS_GPIO_PORT, w25q_CS_PIN);
 }
 
 void FlashChipDeselect(void){
 	/* Deselect sFLASH: Chip Select pin high */
-//	SPI2MutexRelease();
+	SPI2MutexRelease();
 	GPIO_SetBits(w25q_CS_GPIO_PORT, w25q_CS_PIN);
 }
 

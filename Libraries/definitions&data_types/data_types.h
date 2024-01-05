@@ -14,7 +14,7 @@
 typedef struct MQTT_cred_t{
 	bool save;
 	bool enable;
-	uint8_t ip[4];
+	char uri[MAX_DOMAIN_NAME];
 	uint16_t port;
 	char login[MAX_MQTT_LOGIN_LEN];
 	char pass[MAX_MQTT_PASS_LEN];

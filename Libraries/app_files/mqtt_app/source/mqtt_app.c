@@ -13,7 +13,10 @@
 #include "mbutils.h"
 #include "definition.h"
 #include "mqtt_gen_strings.h"
+#include "socket.h"
 
+#include "dns_service.h"
+#include "stdbool.h"
 
 
 #define SUBSCR_TOPIK_BUF_LEN		64
@@ -39,7 +42,7 @@ char		 			buf_payload[SEND_PAYLOD_LEN];
 uint16_t				mqtt_recv_buf_len;
 uint16_t				mqtt_send_buf_len;
 MQTTPacket_connectData 	mqtt_packet_data = MQTTPacket_connectData_initializer;
-uint8_t*				mqtt_server_ip;
+uint8_t					mqtt_server_ip[4];
 uint16_t*				mqtt_server_port;
 Network 				MQTT_network;
 MQTTClient 				MQTT_Client;
@@ -49,9 +52,6 @@ MQTTMessage 			mqtt_message;
 //need optimaze
 char		 			sub_topik_template[] = "biver_%s/+/set";
 char					sub_topik[SUBSCR_TOPIK_BUF_LEN];
-
-
-
 
 void func_prototype(void){};
 
@@ -79,8 +79,10 @@ void mqtt_IO_coil_q_init(xQueueHandle qRead, xQueueHandle qWrite){
 	coil_q_write	= qWrite;
 }
 
-void mqtt_client_init(Ethernet_info_struct* eth_data, MQTT_cred_struct * mqtt_data, unsigned char * send_buf, \
-		uint16_t send_buf_suze, unsigned char * receive_buf, uint16_t receive_buf_len){
+
+
+int mqtt_client_init(Ethernet_info_struct* eth_data, MQTT_cred_struct * mqtt_data, char * send_buf, \
+		uint16_t send_buf_suze, char * receive_buf, uint16_t receive_buf_len){
 
 	EthernetInfo 		= eth_data;
 	MQTT_credentials	= mqtt_data;
@@ -94,6 +96,13 @@ void mqtt_client_init(Ethernet_info_struct* eth_data, MQTT_cred_struct * mqtt_da
 	sprintf(IP_ADDR_CHR, "%u.%u.%u.%u", EthernetInfo->ip[0], EthernetInfo->ip[1], EthernetInfo->ip[2], EthernetInfo->ip[3]);
 	set_device_conf_ip(&IP_ADDR_CHR);
 
+	//strncpy(mqtt_send_buf, MQTT_credentials->uri, MAX_DOMAIN_NAME);
+	if ( isValidIPv4(MQTT_credentials->uri)){
+		sscanf(MQTT_credentials->uri, "%d.%d.%d.%d", &mqtt_server_ip[0], &mqtt_server_ip[1], &mqtt_server_ip[2], &mqtt_server_ip[3]);
+	}else if(dns_service_resolve_name(MQTT_credentials->uri, &mqtt_server_ip)== -1){
+		return -1; // DNS resolve error;
+	}
+
 	mqtt_packet_data.willFlag			= 0;
 	mqtt_packet_data.MQTTVersion		= 3;
 	mqtt_packet_data.clientID.cstring	= &MAC_ADDR_CHR;
@@ -101,7 +110,7 @@ void mqtt_client_init(Ethernet_info_struct* eth_data, MQTT_cred_struct * mqtt_da
 	mqtt_packet_data.cleansession		= 1;
 	mqtt_packet_data.username.cstring 	= &MQTT_credentials->login;
 	mqtt_packet_data.password.cstring 	= &MQTT_credentials->pass;
-	mqtt_server_ip						= MQTT_credentials->ip;
+//	mqtt_server_ip						= MQTT_credentials->ip;
 	mqtt_server_port					= MQTT_credentials->port;
 
 	mqtt_message.id						= 0;
@@ -111,6 +120,8 @@ void mqtt_client_init(Ethernet_info_struct* eth_data, MQTT_cred_struct * mqtt_da
 
 	NewNetwork(&MQTT_network, MQTT_CLIENT_SOCKET);
 	MQTTClientInit(&MQTT_Client, &MQTT_network, COMMAND_TIMEOUT_MS, mqtt_send_buf, mqtt_send_buf_len, mqtt_recv_buf, mqtt_recv_buf_len);
+
+	return 0;
 }
 
 
@@ -121,7 +132,13 @@ int16_t mqtt_client_connect(void){
 	set_mutex();
 	result = ConnectNetwork(&MQTT_network, mqtt_server_ip, mqtt_server_port);
 	release_mutex();
-	if (result != 1) return result;    // 1 means SOCK_OK;
+	if (result != 1) {
+		set_mutex();
+		disconnect(MQTT_network.my_socket);
+		close(MQTT_network.my_socket);
+		release_mutex();
+		return result - 10;    // 1 means SOCK_OK;
+	}
 	set_mutex();
 	result = MQTTConnect(&MQTT_Client, &mqtt_packet_data);
 	release_mutex();

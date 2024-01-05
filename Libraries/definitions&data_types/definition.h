@@ -52,10 +52,11 @@
 #define MODBUS_PORT				502
 
 /*----------------------DNS--------------------------*/
-#define	MAX_DNS_BUF_SIZE		2048
+#define	MAX_DNS_BUF_SIZE		1024
 #define MAX_DOMAIN_NAME   		128
 #define	MAX_DNS_RETRY     		2
 #define	DNS_WAIT_TIME     		3
+#define DNS_USE_MUTEX
 
 /*------------LFS_DEFINEs----------------------------*/
 #define FLASH_BLOCK_CYCLES 		10000
@@ -63,12 +64,18 @@
 #define LFS_NO_DEBUG
 #define LFS_NO_ERROR
 //#define LFS_THREADSAFE
+#define LFS_USE_MUTEX
 
-/*---------------HTTP_DEFINEs------------------------*/
-#define HTTP_SERVER_NSOCKETS	1
+/*---------------HTTP_SERVER_DEFINEs------------------------*/
+//#define HTTP_SERVER_NSOCKETS	3
 #define HTTP_SERVER_PORT		80
 #define MAX_CONTENT_NAME_LEN	30
-#define MAX_CONTENT_CALLBACK	3
+#define MAX_CONTENT_CALLBACK	4
+#define HTTP_FS_DIR				"web/"
+
+/*---------------HTTP_CLIENT_DEFINEs------------------------*/
+
+
 
 /*----------------MQTT-------------------------------*/
 #define TOPIK_MAX_LEN				128
@@ -86,10 +93,17 @@
 /*------------W5500_Sockets--------------------------*/
 #define DHCP_SOCKET				0
 #define HTTP_SERVER_SOCKET		1
+#define HTTP_SERVER_SOCKET1		2
+#define HTTP_SERVER_SOCKET2		3
 #define MQTT_CLIENT_SOCKET		4
+#define SERVICE_SOCKET			6
 #define START_MODBUS_SOCKET		7
 #define	END_MODBUS_SOCKET		7
 
 /*-----------DEBUG_PARAMETERS-----------------------*/
 #define DEBUG_FREERTOS_ENABLE
+#define FreeRTOS_DEBUG
+//------------------VERSION DEF----------------------//
+#define COMPILE_DATE			__DATE__
+#define COMPILE_TIME			__TIME__
 #endif /* DEFINITIONS_DATA_TYPES_DEFINITION_H_ */

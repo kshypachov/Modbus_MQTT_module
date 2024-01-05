@@ -103,7 +103,7 @@ void DNS_init(uint8_t s, uint8_t * buf);
  *           1 : success
  * @note This funtion blocks until success or fail. max time = @ref MAX_DNS_RETRY * @ref DNS_WAIT_TIME
  */
-int8_t DNS_run(uint8_t * dns_ip, uint8_t * name, uint8_t * ip_from_dns);
+int8_t DNS_run(uint8_t * dns_ip, const uint8_t * name, uint8_t * ip_from_dns);
 
 /*
  * @brief DNS 1s Tick Timer handler

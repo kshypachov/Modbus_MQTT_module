@@ -96,7 +96,7 @@ void SPI_flash_io_init(void){
 	flash_conf.send_byte = SPI_SendByte;
 }
 
-void sFLASH_GetInfo(void){
+struct SPI_flash_info sFLASH_GetInfo(void){
 	uint32_t flash_id;
 	flash_id = sFLASH_ReadID();
 
@@ -130,6 +130,9 @@ void sFLASH_GetInfo(void){
 			flash_info.flash_id = sFLASH_UNNOUN_ID;
 			break;
 	}
+
+	return flash_info;
+
 }
 
 void sFLASH_CS_LOW(void){ //select chip

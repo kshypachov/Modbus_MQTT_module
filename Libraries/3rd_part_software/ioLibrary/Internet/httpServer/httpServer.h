@@ -24,6 +24,8 @@ extern "C" {
 //#define _USE_SDCARD_
 #ifndef _USE_SDCARD_
 //#define _USE_FLASH_
+#define _USE_USER_FLASH_
+#define _USE_USER_SPI_FLASH_
 #endif
 
 #if !defined(_USE_SDCARD_) && !defined(_USE_FLASH_)
@@ -63,10 +65,11 @@ extern "C" {
 
 typedef enum
 {
-   NONE,		///< Web storage none
-   CODEFLASH,	///< Code flash memory
-   SDCARD,    	///< SD card
-   DATAFLASH	///< External data flash memory
+   NONE,			///< Web storage none
+   CODEFLASH,		///< Code flash memory
+   SDCARD,    		///< SD card
+   DATAFLASH,		///< External data flash memory
+   USERSPIFLASH		///< External flash memory with
 }StorageType;
 
 typedef struct _st_http_socket
@@ -94,6 +97,7 @@ typedef struct _httpServer_webContent
 
 void httpServer_init(uint8_t * tx_buf, uint8_t * rx_buf, uint8_t cnt, uint8_t * socklist);
 void reg_httpServer_cbfunc(void(*mcu_reset)(void), void(*wdt_reset)(void));
+void reg_httpServer_cbfunc_delay(void(*delay_function)(uint32_t));
 void httpServer_run(uint8_t seqnum);
 
 void reg_httpServer_webContent(uint8_t * content_name, uint8_t * content);

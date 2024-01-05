@@ -18,8 +18,8 @@ void init_mqtt_call_mutex(void (* set_mut), void (* rel_mut));
 void init_mqtt_call_rw_coils(void (* call_read_coils), void (* call_write_coils));
 void mqtt_IO_coil_q_init(xQueueHandle qRead, xQueueHandle qWrite);
 void mqtt_message_resieve(MessageData* data);
-void mqtt_client_init(Ethernet_info_struct* eth_data, MQTT_cred_struct * mqtt_data, unsigned char * send_buf, \
-		uint16_t send_buf_suze, unsigned char * receive_buf, uint16_t receive_buf_len);
+int  mqtt_client_init(Ethernet_info_struct* eth_data, MQTT_cred_struct * mqtt_data, char * send_buf, \
+		uint16_t send_buf_suze, char * receive_buf, uint16_t receive_buf_len);
 int16_t mqtt_client_connect(void);
 int8_t mqtt_client_reg_dev_on_home_assist(void);
 int8_t mqtt_subscrabe_on_topik(void);

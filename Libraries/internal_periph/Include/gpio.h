@@ -26,7 +26,6 @@
 #define oled_I2C_SCL_SOURCE					GPIO_PinSource6
 #define oled_I2C_SCL_AF						GPIO_AF_I2C1
 
-
 /*
  * PD0 --------------> Coil1
  * PD1 --------------> Coil2
